@@ -4,16 +4,17 @@ hostname: <HOSTNAME>
 users:
   - name: core
     ssh-authorized-keys: 
-      - <SSH_PUBLIC_KEY>
+      - "<SSH_PUBLIC_KEY>"
     groups: 
       - sudo
     shell: /bin/bash
 
 write_files:
-  - path: /etc/calico-environment
+  - path: /etc/kubelet-plugins/calico/calico_kubernetes.ini
     owner: root
     permissions: 0755
     content: |
+      [config]
       # The Kubernetes master IP
       KUBERNETES_MASTER=<KUBERNETES_MASTER>
       
@@ -21,8 +22,11 @@ write_files:
       ETCD_AUTHORITY=<KUBERNETES_MASTER>:6666
       
       # URL to access the Kubernetes apiserver
-      KUBE_API_ROOT=http://<KUBERNETES_MASTER>:8080/api/v1/
-      
+      KUBE_API_ROOT=https://<KUBERNETES_MASTER>:443/api/v1/
+
+      # TOKEN used to access the Kubernetes API
+      KUBE_AUTH_TOKEN="<AUTH_TOKEN>"
+
       # Enable Calcio IPAM
       CALICO_IPAM=true
 
@@ -40,11 +44,6 @@ write_files:
       # Run setup-network-environment.
       /opt/bin/setup-network-environment
 
-      # Combine network-environment and calico-environment.
-      echo " " >> /etc/network-environment
-      echo "# --- Begin appended /etc/calico-environment --" >> /etc/network-environment
-      cat /etc/calico-environment >> /etc/network-environment
- 
   - path: /opt/bin/kubernetes-install.sh
     owner: root
     permissions: 0755
@@ -54,18 +53,13 @@ write_files:
       if [ ! -f /opt/bin/kubelet ]; then
         echo "Kubenetes not installed - installing."
 
-        # Get the Kubernetes Release.
-        wget https://github.com/kubernetes/kubernetes/releases/download/v1.1.2/kubernetes.tar.gz
-        
         # Extract the Kubernetes binaries.
-        tar -xf kubernetes.tar.gz
-        tar -xf kubernetes/server/kubernetes-server-linux-amd64.tar.gz
-        
-        # Install the `kubelet` and `kubectl` binaries.
-        sudo chmod +x kubernetes/server/bin/kubelet
-        sudo chmod +x kubernetes/server/bin/kube-proxy
-        sudo cp -f kubernetes/server/bin/kubelet /opt/bin
-        sudo cp -f kubernetes/server/bin/kube-proxy /opt/bin
+        sudo wget -N -P /opt/bin http://storage.googleapis.com/kubernetes-release/release/v1.1.2/bin/linux/amd64/kubelet
+        sudo chmod +x /opt/bin/kubelet
+
+        # Create required folders
+        sudo mkdir -p /etc/kubernetes/manifests/
+        sudo mkdir -p /etc/kubernetes/ssl/
       fi
 
   - path: /opt/bin/calico-install.sh
@@ -83,8 +77,88 @@ write_files:
         sudo mv calicoctl /opt/bin
 
         # Fetch the calico/node container
-        sudo docker pull calico/node:v0.12.0 
+        sudo docker pull calico/node:v0.12.0
       fi
+
+  - path: /etc/kubernetes/ssl/ca.pem
+    owner: core
+    permissions: 0644
+    content: |
+      <CA_CERT>
+  - path: /etc/kubernetes/ssl/worker.pem
+    owner: core
+    permissions: 0644
+    content: |
+      <WORKER_CERT>
+  - path: /etc/kubernetes/ssl/worker-key.pem
+    owner: root
+    permissions: 0600
+    content: |
+      <WORKER_KEY>
+
+  - path: /etc/kubernetes/worker-kubeconfig.yaml
+    owner: root
+    permissions: 0755
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: local
+        cluster:
+          server: https://kubernetes-master
+          certificate-authority: /etc/kubernetes/ssl/ca.pem
+      users:
+      - name: kubelet
+        user:
+          client-certificate: /etc/kubernetes/ssl/worker.pem
+          client-key: /etc/kubernetes/ssl/worker-key.pem
+      contexts:
+      - context:
+          cluster: local
+          user: kubelet
+        name: kubelet-context
+      current-context: kubelet-context
+
+  - path: /etc/kubernetes/manifests/kube-proxy.manifest
+    owner: root
+    permissions: 0755
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-proxy
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-proxy
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - proxy
+          - --master=https://kubernetes-master:443
+          - --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml
+          - --proxy-mode=iptables
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /etc/ssl/certs
+              name: "ssl-certs"
+            - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
+              name: "kubeconfig"
+              readOnly: true
+            - mountPath: /etc/kubernetes/ssl
+              name: "etc-kube-ssl"
+              readOnly: true
+        volumes:
+          - name: "ssl-certs"
+            hostPath:
+              path: "/usr/share/ca-certificates"
+          - name: "kubeconfig"
+            hostPath:
+              path: "/etc/kubernetes/worker-kubeconfig.yaml"
+          - name: "etc-kube-ssl"
+            hostPath:
+              path: "/etc/kubernetes/ssl"
 
 coreos:
   update:
@@ -145,11 +219,12 @@ coreos:
         [Service]
         User=root
         EnvironmentFile=/etc/network-environment
+        Environment=ETCD_AUTHORITY=<KUBERNETES_MASTER>:6666
         PermissionsStartOnly=true
-        ExecStart=/opt/bin/calicoctl node --kubernetes --kube-plugin-version=v0.6.1 --detach=false
+        ExecStart=/opt/bin/calicoctl node --kubernetes --kube-plugin-version=v0.7.0 --detach=false
         Restart=always
         RestartSec=10
-    
+
         [Install]
         WantedBy=multi-user.target
 
@@ -165,35 +240,22 @@ coreos:
 
         [Service]
         EnvironmentFile=/etc/network-environment
+        EnvironmentFile=/etc/kubelet-plugins/calico/calico_kubernetes.ini
         ExecStart=/opt/bin/kubelet \
-        --address=0.0.0.0 \
         --port=10250 \
-        --hostname_override=${DEFAULT_IPV4} \
+        --address=0.0.0.0 \
+        --allow-privileged=true \
         --cluster-dns=10.100.0.10 \
         --cluster-domain=cluster.local \
-        --api_servers=${KUBERNETES_MASTER}:8080 \
-        --network_plugin=calico \
-        --network_plugin_dir=/etc/kubelet-plugins \
+        --config=/etc/kubernetes/manifests \
+        --hostname-override=${DEFAULT_IPV4} \
+        --api-servers=https://${KUBERNETES_MASTER}:443 \
+        --network-plugin-dir=/etc/kubelet-plugins \
+        --network-plugin=calico \
+        --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
+        --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem \
+        --tls-cert-file=/etc/kubernetes/ssl/worker.pem \
         --logtostderr=true
-        Restart=always
-        RestartSec=10
-
-        [Install]
-        WantedBy=multi-user.target
-
-    - name: kube-proxy.service
-      runtime: true
-      command: start
-      content: |
-        [Unit]
-        Description=Kubernetes Proxy
-        Documentation=https://github.com/kubernetes/kubernetes
-        After=calico-node.service
-        Requires=calico-node.service
-
-        [Service]
-        EnvironmentFile=/etc/network-environment
-        ExecStart=/opt/bin/kube-proxy --master=http://${KUBERNETES_MASTER}:8080 --logtostderr=true --proxy-mode=iptables
         Restart=always
         RestartSec=10
 

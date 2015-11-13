@@ -1,27 +1,57 @@
 apiVersion: v1
-kind: ReplicationController
+kind: Namespace
 metadata:
-  name: kube-dns-v8
+  name: kube-system
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-dns
   namespace: kube-system
   labels:
     k8s-app: kube-dns
-    version: v8
     kubernetes.io/cluster-service: "true"
+    kubernetes.io/name: "KubeDNS"
 spec:
-  replicas: 1 
   selector:
     k8s-app: kube-dns
-    version: v8
+  clusterIP: 10.100.0.10
+  ports:
+  - name: dns
+    port: 53
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    protocol: TCP
+
+---
+
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kube-dns-v9
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+    version: v9
+    kubernetes.io/cluster-service: "true"
+spec:
+  replicas: 1
+  selector:
+    k8s-app: kube-dns
+    version: v9
   template:
     metadata:
       labels:
         k8s-app: kube-dns
-        version: v8
+        version: v9
         kubernetes.io/cluster-service: "true"
     spec:
       containers:
       - name: etcd
-        image: gcr.io/google_containers/etcd:2.0.9
+        image: gcr.io/google_containers/etcd:2.2.1
         resources:
           limits:
             cpu: 100m
@@ -48,9 +78,18 @@ spec:
         args:
         # command = "/kube2sky"
         - -domain=cluster.local
-        - -kube_master_url=http://<MASTER_IP>:8080
+        - -kubecfg_file=/etc/kubernetes/worker-kubeconfig.yaml
+        volumeMounts:
+        - mountPath: /etc/ssl/certs
+          name: "ssl-certs"
+        - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
+          name: "worker-kubeconfig"
+          readOnly: true
+        - mountPath: /etc/kubernetes/ssl
+          name: "etc-kube-ssl"
+          readOnly: true
       - name: skydns
-        image: gcr.io/google_containers/skydns:2015-03-11-001
+        image: gcr.io/google_containers/skydns:2015-10-13-8c72f8c
         resources:
           limits:
             cpu: 100m
@@ -74,6 +113,13 @@ spec:
             scheme: HTTP
           initialDelaySeconds: 30
           timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 1
+          timeoutSeconds: 5
       - name: healthz
         image: gcr.io/google_containers/exechealthz:1.0
         resources:
@@ -89,4 +135,13 @@ spec:
       volumes:
       - name: etcd-storage
         emptyDir: {}
+      - name: "ssl-certs"
+        hostPath:
+          path: "/usr/share/ca-certificates"
+      - name: "worker-kubeconfig"
+        hostPath:
+          path: "/etc/kubernetes/worker-kubeconfig.yaml"
+      - name: "etc-kube-ssl"
+        hostPath:
+          path: "/etc/kubernetes/ssl"
       dnsPolicy: Default  # Don't use cluster DNS.

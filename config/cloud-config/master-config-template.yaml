@@ -1,10 +1,10 @@
 #cloud-config
 ---
-hostname: kube-master
+hostname: kubernetes-master
 users:
   - name: core
     ssh-authorized-keys: 
-      - <SSH_PUBLIC_KEY>
+      - "<SSH_PUBLIC_KEY>"
     groups: 
       - sudo
     shell: /bin/bash
@@ -19,18 +19,10 @@ write_files:
       if [ ! -f /opt/bin/kubelet ]; then
         echo "Kubenetes not installed - installing."
 
-        # Get the Kubernetes Release.
-        wget https://github.com/kubernetes/kubernetes/releases/download/v1.1.2/kubernetes.tar.gz
-        
         # Extract the Kubernetes binaries.
-        tar -xf kubernetes.tar.gz
-        tar -xf kubernetes/server/kubernetes-server-linux-amd64.tar.gz
-        
-        # Install the `kubelet` and `kubectl` binaries.
-        sudo chmod +x kubernetes/server/bin/kubelet
-        sudo chmod +x kubernetes/server/bin/kubectl
-        sudo cp -f kubernetes/server/bin/kubelet /opt/bin
-        sudo cp -f kubernetes/server/bin/kubectl /opt/bin
+        sudo wget -N -P /opt/bin http://storage.googleapis.com/kubernetes-release/release/v1.1.2/bin/linux/amd64/kubectl
+        sudo wget -N -P /opt/bin http://storage.googleapis.com/kubernetes-release/release/v1.1.2/bin/linux/amd64/kubelet
+        sudo chmod +x /opt/bin/kubelet /opt/bin/kubectl
       fi
 
   - path: /opt/bin/calico-install.sh
@@ -57,26 +49,24 @@ write_files:
     content: |
       #! /usr/bin/bash
       
-      # Ensure manifest directory exists.
-      sudo mkdir -p /etc/kubernetes/manifests
+      # Ensure directories exists.
+      sudo mkdir -p /etc/kubernetes/manifests/
+      sudo mkdir -p /etc/kubernetes/ssl/
+      sudo mkdir -p /etc/kubernetes/addons/
       
-      if [ ! -f /etc/kubernetes/manifests/kubernetes-master.manifest ]; then
+      if [ ! -f /etc/kubernetes/manifests/kubernetes-master.manifest -o ! -f /etc/kubernetes/manifests/calico-etcd.manifest ]; then
         echo "Manifests not installed - installing."
 
         # Download config.
-        wget https://github.com/projectcalico/calico-kubernetes/archive/master.tar.gz
-        tar -xvf master.tar.gz
-
-        # Install kubernetes-master.manifest
-        sudo cp -f calico-kubernetes-master/config/master/kubernetes-master.manifest /etc/kubernetes/manifests
+        sudo wget -N -P /etc/kubernetes/manifests/ https://raw.githubusercontent.com/projectcalico/calico-kubernetes/master/config/master/kubernetes-master.manifest
+        sudo wget -N -P /etc/kubernetes/manifests/ https://raw.githubusercontent.com/projectcalico/calico-kubernetes/master/config/master/calico-etcd.manifest
+        sudo wget -N -P /etc/kubernetes/addons/ https://raw.githubusercontent.com/projectcalico/calico-kubernetes/master/config/master/dns/skydns.yaml
       fi
-
-      # Copy the calico-etcd manifest.
-      sudo cp -f calico-kubernetes-master/config/master/calico-etcd.manifest /etc/kubernetes/manifests
 
       # Insert the master's IP address into the manifest.
       echo "DEFAULT_IPV4: $DEFAULT_IPV4"
       sudo sed -i -e "s/<PRIVATE_IPV4>/$DEFAULT_IPV4/g" /etc/kubernetes/manifests/calico-etcd.manifest
+
 
 coreos:
   update:
@@ -141,7 +131,11 @@ coreos:
   
         [Service]
         ExecStart=/opt/bin/kubelet \
+        --register-node=false \
+        --allow-privileged=true \
         --config=/etc/kubernetes/manifests \
+        --cluster-dns=10.100.0.10 \
+        --cluster_domain=cluster.local \
         --logtostderr=true
         Restart=always
         RestartSec=10
