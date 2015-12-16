@@ -29,7 +29,8 @@ spec:
   containers: 
     - name: etcd
       image: gcr.io/google_containers/etcd:2.2.1
-      args: 
+      command:
+        - "/usr/local/bin/etcd"
         - "--data-dir=/var/lib/etcd"
         - "--advertise-client-urls=http://127.0.0.1:2379"
         - "--listen-client-urls=http://127.0.0.1:2379"

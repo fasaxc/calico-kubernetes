@@ -7,8 +7,9 @@ spec:
     hostNetwork: true
     containers:
     - name: calico-etcd-container
-      image: b.gcr.io/kuar/etcd:2.1.1
-      args:
+      image: gcr.io/google_containers/etcd:2.2.1
+      command:
+        - "/usr/local/bin/etcd"
         - "--name=calico-etcd"
         - "--data-dir=/var/etcd/calico-data"
         - "--advertise-client-urls=http://<PRIVATE_IPV4>:6666"
