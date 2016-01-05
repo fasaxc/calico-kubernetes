@@ -12,8 +12,8 @@ ETCD_AUTHORITY=<KUBERNETES_MASTER>:6666
 # URL to access the Kubernetes apiserver
 KUBE_API_ROOT=https://<KUBERNETES_MASTER>:443/api/v1/
 
-# TOKEN used to access the Kubernetes API
+# Service account token used to access the Kubernetes API
 KUBE_AUTH_TOKEN="<AUTH_TOKEN>"
 
-# Enable Calcio IPAM
+# Enable Calico IPAM
 CALICO_IPAM=true
