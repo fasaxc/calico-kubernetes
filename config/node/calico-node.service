@@ -5,8 +5,8 @@ Requires=docker.service
 After=docker.service
 
 [Service]
-EnvironmentFile=/etc/network-environment
 User=root
+EnvironmentFile=/etc/calico-node.env
 PermissionsStartOnly=true
 ExecStart=/usr/bin/calicoctl node --ip=${DEFAULT_IPV4} --kubernetes --kube-plugin-version=v0.6.1 --detach=false
 Restart=always
