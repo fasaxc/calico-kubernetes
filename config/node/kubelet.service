@@ -14,11 +14,12 @@ ExecStart=/usr/bin/kubelet \
 --config=/etc/kubernetes/manifests \
 --hostname-override=${DEFAULT_IPV4} \
 --api-servers=https://${KUBERNETES_MASTER}:443 \
---network-plugin=calico \
 --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
 --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem \
 --tls-cert-file=/etc/kubernetes/ssl/worker.pem \
---logtostderr=true
+--logtostderr=true \
+--network-plugin=cni \
+--network-plugin-dir=/etc/cni/net.d
 Restart=always
 RestartSec=10
 
